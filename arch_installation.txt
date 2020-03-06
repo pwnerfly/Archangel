@@ -1,0 +1,140 @@
+https://www.hiteshpaul.com/posts/14829/
+https://www.vultr.com/docs/install-arch-linux-with-btrfs-snapshotting
+https://computingforgeeks.com/install-arch-linux-luks-encryption/
+https://stafwag.github.io/blog/blog/2016/08/30/arch-on-an-encrypted-btrfs-partition/
+https://gist.github.com/ansulev/7cdf38a3d387599adf9addd248b09db8
+https://fogelholk.io/installing-arch-with-lvm-on-luks-and-btrfs/
+https://gist.github.com/idvoretskyi/9a516921fab0ad4e3ea0
+https://gist.github.com/broedli/5604637d5855bef68f3e
+
+# Currently not included:
+    a proper installation guide -- this textfile is more like a clue on how you could install arch. Don't use it. It's not finished. Not even close.
+    zsh
+    https://www.hiteshpaul.com/posts/14829/ Snapshots and Snapper
+
+
+loadkeys de-latin1
+set -o vi
+wifi-menu #(not on virtual machine)
+timedatectl set-ntp true
+timedatectl status
+
+## partitioning
+fdisk /dev/sda
+    g
+    n
+    <enter>
+    <enter>
+    +300M
+    t
+    [EFI]
+
+    n
+    <enter>
+    <enter>
+    +600M
+    n
+    <enter>
+    <enter>
+    <enter>
+    t
+    [Linux LVM]
+    w
+
+mkfs.fat -F32 /dev/sda1
+mkfs.ext4 /dev/sda2
+cryptsetup luksFormat -v -s 512 -h sha512 /dev/sda3 # asks for passphrase
+cryptsetup open --type luks /dev/sda3 lvm
+## create lvm
+pvcreate --dataalignment 1m /dev/mapper/lvm
+vgcreate [volgroup0] /dev/mapper/lvm
+lvcreate -L 65G volgroup0 -n lv_root
+lvcreate -l 100%FREE volgroup0 -n lv_home 
+modprobe dm_mod
+vgscan
+vgchange -ay
+
+mkfs.btrfs /dev/volgroup0/lv_root
+mkfs.xfs /dev/volgroup0/lv_home
+
+mount /dev/volgroup0/lv_root /mnt
+mkdir /mnt/{boot,home}
+mount /dev/sda2 /mnt/boot
+mount /dev/volgroup0/lv_home /mnt/home
+
+
+# Update Mirrorlist
+pacman -Sy reflector
+reflector --verbose --country 'Germany' -l 30 -p https --sort rate --save /etc/pacman.d/mirrorlist
+
+# Install system, text editor, wifi and some more 
+pacstrap /mnt reflector base base-devel neovim bash-completion e2fsprogs dosfstools exfat-utils btrfs-progs grub-btrfs snapper linux-zen linux-zen-headers linux-firmware efibootmgr grub intel-ucode dosfstools openssh net-tools networkmanager dialog wpa_supplicant wireless_tools rfkill
+
+
+genfstab -U -p /mnt >> /mnt/etc/fstab
+arch-chroot /mnt
+
+
+# vi /etc/pacman.conf
+# Add to [options] section:
+>ILoveCandy
+# visudo
+%wheel ALL=(ALL) ALL
+# vim /etc/mkinitcpio.conf
+HOOKS=( ...block keymap keyboard encrypt lvm2 filesystems ...)
+mkinitcpio -p linux-zen
+
+vim /etc/default/grub
+#GRUB_CMDLINE_LINUX_DEFAULT="cryptdevice=/dev/sda3:volgroup0 loglevel=3 quiet"
+mkdir /boot/EFI
+mount /dev/sda1 /boot/EFI
+grub-install --target=x86_64-efi --bootloader-id=grub_uefi --recheck
+mkdir /boot/grub/locale/
+cp /usr/share/locale/en\@quot/LC_MESSAGES/grub.mo /boot/grub/locale/en.mo
+grub-mkconfig -o /boot/grub/grub.cfg
+
+# base configuration
+ln -sf /usr/share/zoneinfo/Europe/Berlin /etc/localtime
+hwclock --systohc
+systemctl enable systemd-timesyncd
+
+# Set hostname
+echo archangel > /etc/hostname
+/etc/hosts
+#127.0.0.1	localhost
+#::1		localhost
+#127.0.1.1	myhostname.localdomain	myhostname
+
+vim /etc/locale.gen # uncomment both en_US - entries
+locale-gen
+
+echo "LANG=en_US.UTF-8" > /etc/locale.conf
+echo "KEYMAP=de-latin1" > /etc/vconsole.conf
+echo LC_ALL=C >> /etc/locale.conf
+
+# Set virtul console lang and font
+echo KEYMAP=de > /etc/vconsole.conf
+echo FONT=Lat2-Terminus16 >> /etc/vconsole.conf
+
+# Set password for root
+passwd
+
+# Create user and set password
+useradd -m -G wheel,uucp,lock angel
+passwd angel
+
+systemctl enable networkmanager
+
+
+## Installation program
+
+# Man pages
+pacman -S man-db man-pages
+
+# TLP
+IMPORTANT:
+    at the end of /etc/tlp.conf
+    SATA_LINKPWR_ON_BAT=max_performance
+https://wiki.archlinux.org/index.php/TLP
+pacman -S TLP acpi_call
+systemctl enable --now tlp.service
